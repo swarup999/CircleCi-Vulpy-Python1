@@ -15,8 +15,8 @@ def db_init():
     c.execute("DROP TABLE users")
     c.execute("CREATE TABLE users (user text, password text, failures int)")
 
-    for u,p in users:
-        c.execute("INSERT INTO users (user, password, failures) VALUES ('%s', '%s', '%d')" %(u, p, 0))
+    for user,passwd in users:
+        c.execute("INSERT INTO users (user, password, failures) VALUES ('%s', '%s', '%d')" %(user, passwd, 0))
 
     conn.commit()
     conn.close()
