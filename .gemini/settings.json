@@ -1,0 +1,6 @@
+{
+    "mcp_servers": ["https://gemini-api.google.com"],
+    "style_guide": ".gemini/styleguide.md",
+    "max_tokens": 1000000,
+    "cache_enabled": true
+}

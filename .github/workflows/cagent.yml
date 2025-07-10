@@ -1,0 +1,51 @@
+name: CAgent Workflow
+on:
+  issue_comment:
+    types: [created]
+jobs:
+  cagent:
+    runs-on: ubuntu-latest
+    outputs:
+      triggered: ${{ steps.parse-comment.outputs.triggered }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.8'
+      - name: Install Dependencies
+        run: |
+          pip install PyGithub pinecone-client requests
+          npm install -g @google/gemini-cli
+      - name: Parse Comment
+        id: parse-comment
+        run: python scripts/trigger_parser.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      - name: Fetch Context
+        run: python scripts/context_fetcher.py
+        if: steps.parse-comment.outputs.triggered == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      - name: Generate Code
+        run: python scripts/code_generator.py
+        if: steps.parse-comment.outputs.triggered == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      - name: Create PR
+        run: python scripts/pr_manager.py
+        if: steps.parse-comment.outputs.triggered == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      - name: Process Feedback
+        run: python scripts/feedback_learner.py
+        if: steps.parse-comment.outputs.triggered == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}

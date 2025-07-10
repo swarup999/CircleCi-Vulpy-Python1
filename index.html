@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CAgent Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.development.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.development.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/babel-standalone@7.22.5/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body className="bg-gray-100">
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        function Dashboard() {
+            const [tasks, setTasks] = useState([]);
+            const [loading, setLoading] = useState(false);
+            const [statusFilter, setStatusFilter] = useState('all');
+            const [acceptanceRate, setAcceptanceRate] = useState(0);
+
+            useEffect(() => {
+                setLoading(true);
+                // Fetch PRs from GitHub API
+                fetch('https://api.github.com/repos/owner/repo/pulls?state=all', {
+                    headers: {
+                        Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+                        Accept: 'application/vnd.github.v3+json'
+                    }
+                })
+                    .then(response => response.json())
+                    .then(async data => {
+                        const cagentTasks = await Promise.all(data.filter(pr => pr.title.startsWith('CAgent:')).map(async pr => {
+                            const comments = await fetch(pr.comments_url, {
+                                headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` }
+                            }).then(res => res.json());
+                            const feedback = comments.filter(c => c.body.toLowerCase().includes('reject')).map(c => c.body).join('; ');
+                            const retryHistory = data.filter(p => p.title === pr.title && p.number !== pr.number)
+                                .map(p => ({ number: p.number, url: p.html_url, state: p.state }));
+                            return {
+                                id: pr.number,
+                                issue: pr.title.replace('CAgent: Address issue #', 'Issue #'),
+                                status: pr.state === 'open' ? 'PR Created' : pr.merged_at ? 'Merged' : 'Feedback Received',
+                                prLink: pr.html_url,
+                                feedback: feedback || 'None',
+                                retryHistory
+                            };
+                        }));
+                        setTasks(cagentTasks);
+                        const merged = cagentTasks.filter(t => t.status === 'Merged').length;
+                        const total = cagentTasks.length;
+                        setAcceptanceRate(total > 0 ? ((merged / total) * 100).toFixed(2) : 0);
+                        setLoading(false);
+                    })
+                    .catch(error => {
+                        console.error('Error fetching tasks:', error);
+                        setLoading(false);
+                    });
+            }, []);
+
+            const filteredTasks = statusFilter === 'all' ? tasks : tasks.filter(task => task.status === statusFilter);
+
+            return (
+                <div className="container mx-auto p-4">
+                    <h1 className="text-3xl font-bold mb-4">CAgent Dashboard</h1>
+                    <p className="text-gray-600 mb-6">Monitor and manage @cagent tasks for your repository.</p>
+                    <div className="mb-4 flex justify-between items-center">
+                        <div>
+                            <label className="mr-2 text-sm font-medium text-gray-700">Filter by Status:</label>
+                            <select
+                                className="border rounded-md p-2 text-sm"
+                                value={statusFilter}
+                                onChange={e => setStatusFilter(e.target.value)}
+                            >
+                                <option value="all">All</option>
+                                <option value="PR Created">PR Created</option>
+                                <option value="Feedback Received">Feedback Received</option>
+                                <option value="Merged">Merged</option>
+                            </select>
+                        </div>
+                        <div className="text-sm font-medium text-gray-700">
+                            PR Acceptance Rate: {acceptanceRate}%
+                        </div>
+                    </div>
+                    {loading ? (
+                        <p className="text-gray-500">Loading tasks...</p>
+                    ) : (
+                        <div className="bg-white shadow-md rounded-lg overflow-hidden">
+                            <table className="min-w-full divide-y divide-gray-200">
+                                <thead className="bg-gray-50">
+                                    <tr>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Issue</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Feedback</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Retry History</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">PR Link</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                    {filteredTasks.map(task => (
+                                        <tr key={task.id}>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{task.issue}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{task.status}</td>
+                                            <td className="px-6 py-4 text-sm text-gray-500">{task.feedback}</td>
+                                            <td className="px-6 py-4 text-sm text-gray-500">
+                                                {task.retryHistory.length > 0 ? (
+                                                    <ul className="list-disc list-inside">
+                                                        {task.retryHistory.map(r => (
+                                                            <li key={r.number}>
+                                                                <a href={r.url} className="text-blue-600 hover:underline">PR #{r.number} ({r.state})</a>
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                ) : 'None'}
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                                <a href={task.prLink} className="text-blue-600 hover:underline">View PR</a>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                            {filteredTasks.length === 0 && (
+                                <p className="text-center text-gray-500 py-4">No tasks found for selected filter.</p>
+                            )}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        ReactDOM.render(<Dashboard />, document.getElementById('root'));
+    </script>
+</body>
+</html>
