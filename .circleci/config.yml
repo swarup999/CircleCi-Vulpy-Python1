@@ -1,0 +1,107 @@
+version: 2.1
+ 
+jobs:
+  sast-sca-and-deploy:
+    docker:
+      - image: cimg/node:16.0  # Adjust this to your preferred Node.js version
+    steps:
+      - checkout
+      
+      - run:
+          name: Define Environment Variables
+          command: |
+            echo 'export INTRUCEPT_CLIENT_ID="23e4567-e89b-12d3-a456-426614174001"' >> $BASH_ENV
+            echo 'export INTRUCEPT_CLIENT_SECRET="28e3f1b28e08bd58ad20c3896f0016ed"' >> $BASH_ENV
+            echo 'export INTRUCEPT_APPLICATION_ID="687a32744074a9bb273d225d"' >> $BASH_ENV
+            source $BASH_ENV
+
+      - run:
+          name: Prepare for scans
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y zip curl jq
+            zip -r project.zip . -x '*.git*'
+
+      - run:
+          name: Perform SAST scan
+          command: |
+            echo "Starting SAST Scan..."
+            set +e # Allow pipeline to continue even if this command fails
+            #Add your scan name and language field
+            # Make the API request
+            SAST_RESPONSE=$(curl -s -o response.json -w "%{http_code}" -X POST \
+              -H "Client-ID: $INTRUCEPT_CLIENT_ID" \
+              -H "Client-Secret: $INTRUCEPT_CLIENT_SECRET" \
+              -F "projectZipFile=@project.zip" \
+              -F "applicationId=$INTRUCEPT_APPLICATION_ID" \
+              -F "scanName=Python SAST Scan from CircleCI" \
+              -F "language=python" \
+              https://appsecops-api.intruceptlabs.com/api/v1/integrations/sast-scans)
+
+            HTTP_CODE=$(tail -n1 \<< "$SAST_RESPONSE")
+            SAST_RESPONSE_BODY=$(cat response.json)
+
+            # Check for a successful status code (e.g., 200)
+            if [ "$HTTP_CODE" -ne 200 ]; then
+              echo "Error: Received HTTP $HTTP_CODE from SAST API"
+              echo "Response body: $SAST_RESPONSE_BODY"
+              exit 1
+            fi
+
+            # Parse JSON if valid
+            SAST_CAN_PROCEED=$(echo "$SAST_RESPONSE_BODY" | jq -r 'try .canProceed // empty')
+            SAST_VULNS_TABLE=$(echo "$SAST_RESPONSE_BODY" | jq -r 'try .vulnsTable // empty')
+
+            echo "Vulnerabilities found during SAST:"
+            echo "$SAST_VULNS_TABLE"
+
+            if [ "$SAST_CAN_PROCEED" != "true" ]; then
+              echo "SAST scan failed. Continuing to SCA scan, but deployment may be cancelled."
+            fi
+            set -e
+
+      - run:
+          name: Perform SCA scan
+          command: |
+            echo "Starting SCA Scan..."
+            #Add your scan name and language field
+            SCA_RESPONSE=$(curl -s -o response.json -w "%{http_code}" -X POST \
+              -H "Client-ID: $INTRUCEPT_CLIENT_ID" \
+              -H "Client-Secret: $INTRUCEPT_CLIENT_SECRET" \
+              -F "projectZipFile=@project.zip" \
+              -F "applicationId=$INTRUCEPT_APPLICATION_ID" \
+              -F "scanName=Python SCA Scan from CircleCI" \
+              -F "language=python" \
+              https://appsecops-api.intruceptlabs.com/api/v1/integrations/sca-scans)
+
+            HTTP_CODE=$(tail -n1 \<< "$SCA_RESPONSE")
+            SCA_RESPONSE_BODY=$(cat response.json)
+
+            # Check for a successful status code (e.g., 200)
+            if [ "$HTTP_CODE" -ne 200 ]; then
+              echo "Error: Received HTTP $HTTP_CODE from SCA API"
+              echo "Response body: $SCA_RESPONSE_BODY"
+              exit 1
+            fi
+
+            # Parse JSON if valid
+            SCA_CAN_PROCEED=$(echo "$SCA_RESPONSE_BODY" | jq -r 'try .canProceed // empty')
+            SCA_VULNS_TABLE=$(echo "$SCA_RESPONSE_BODY" | jq -r 'try .vulnsTable // empty')
+
+            echo "Vulnerabilities found during SCA:"
+            echo "$SCA_VULNS_TABLE"
+
+            # if [ "$SCA_CAN_PROCEED" != "true" ]; then
+            #   echo "SCA scan failed. Deployment cancelled."
+            #   exit 1
+            # fi
+
+
+workflows:
+  version: 2
+  sast-sca-and-deploy:
+    jobs:
+      - sast-sca-and-deploy:
+          filters:
+            branches:
+              only: master  # Adjust this to your main branch name
